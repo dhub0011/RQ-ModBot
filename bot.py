@@ -3,28 +3,45 @@ import subprocess
 import shutil
 import re
 import logging
+import threading
+from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
+# ======= FLASK WEB SERVER (FOR RENDER) =======
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def home():
+    return "FlixFox Mod Bot is running!"
+
+@flask_app.route('/health')
+def health():
+    return "OK", 200
+
+def run_flask():
+    flask_app.run(host='0.0.0.0', port=8080)
+
+# Start Flask in a background thread
+threading.Thread(target=run_flask, daemon=True).start()
+
 # ======= CONFIG =======
-TOKEN = "8606279165:AAH6TY0bdqdgLRcLWgHx-yITU6FT-s05mXs"  #
+TOKEN = "8606279165:AAH6TY0bdqdgLRcLWgHx-yITU6FT-s05mXs"  # REPLACE WITH YOUR TOKEN
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ======= PATHS =======
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TOOLS_DIR = os.path.join(BASE_DIR, "tools")
 TEMP_DIR = os.path.join(BASE_DIR, "temp")
 MODDED_DIR = os.path.join(BASE_DIR, "modded")
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(MODDED_DIR, exist_ok=True)
 
-# ======= TOOL PATHS =======
-APKTOOL_JAR = os.path.join(TOOLS_DIR, "apktool.jar")
-UBER_SIGNER_JAR = os.path.join(TOOLS_DIR, "uber-apk-signer.jar")
+APKTOOL_JAR = os.path.join(BASE_DIR, "apktool.jar")
+UBER_SIGNER_JAR = os.path.join(BASE_DIR, "uber-apk-signer.jar")
 
-# ======= CORE MODDING ENGINE =======
+# ======= MODDING ENGINE =======
 def mod_apk(input_path, output_path):
     try:
         base_name = os.path.splitext(os.path.basename(input_path))[0]
@@ -36,19 +53,17 @@ def mod_apk(input_path, output_path):
         os.makedirs(work_dir, exist_ok=True)
 
         # Decompile
-        subprocess.run([
-            "java", "-jar", APKTOOL_JAR,
-            "d", input_path,
-            "-o", decompiled_dir,
-            "-f"
-        ], check=True, capture_output=True)
+        subprocess.run(
+            ["java", "-jar", APKTOOL_JAR, "d", input_path, "-o", decompiled_dir, "-f"],
+            check=True,
+            capture_output=True
+        )
 
         # Patch smali
         smali_root = os.path.join(decompiled_dir, "smali")
         if not os.path.exists(smali_root):
             smali_root = os.path.join(decompiled_dir, "smali_classes2")
 
-        patched_count = 0
         for root, dirs, files in os.walk(smali_root):
             for file in files:
                 if not file.endswith(".smali"):
@@ -72,14 +87,12 @@ def mod_apk(input_path, output_path):
                         content,
                         flags=re.DOTALL
                     )
-
                     # Download limit
                     content = re.sub(
                         r'(const/4 v\d+, 0x5)',
                         r'const v\d+, 0x270F',
                         content
                     )
-
                     # Ads
                     content = re.sub(
                         r'(invoke-virtual .*?->shouldShowAd\\(\\)Z).*?move-result v(\d+)',
@@ -87,7 +100,6 @@ def mod_apk(input_path, output_path):
                         content,
                         flags=re.DOTALL
                     )
-
                     # SecShell bypass
                     if "SecShell" in path:
                         content = re.sub(
@@ -100,37 +112,30 @@ def mod_apk(input_path, output_path):
                     if content != original:
                         with open(path, "w", encoding="utf-8", errors="ignore") as f:
                             f.write(content)
-                        patched_count += 1
-                except Exception as e:
-                    logger.warning(f"Could not patch {path}: {e}")
-
-        logger.info(f"Patched {patched_count} smali files")
+                except Exception:
+                    pass
 
         # Rebuild
-        subprocess.run([
-            "java", "-jar", APKTOOL_JAR,
-            "b", decompiled_dir,
-            "-o", rebuilt_apk
-        ], check=True, capture_output=True)
+        subprocess.run(
+            ["java", "-jar", APKTOOL_JAR, "b", decompiled_dir, "-o", rebuilt_apk],
+            check=True,
+            capture_output=True
+        )
 
         # Sign
-        subprocess.run([
-            "java", "-jar", UBER_SIGNER_JAR,
-            "--apks", rebuilt_apk,
-            "--out", work_dir,
-            "--overwrite"
-        ], check=True, capture_output=True)
+        subprocess.run(
+            ["java", "-jar", UBER_SIGNER_JAR, "--apks", rebuilt_apk, "--out", work_dir, "--overwrite"],
+            check=True,
+            capture_output=True
+        )
 
         signed_files = [f for f in os.listdir(work_dir) if f.endswith(".apk") and "signed" in f.lower()]
         if signed_files:
-            signed_path = os.path.join(work_dir, signed_files[0])
-            shutil.copy(signed_path, output_path)
-            return (True, output_path, None)
-        else:
-            return (False, None, "Signing failed")
-
+            shutil.copy(os.path.join(work_dir, signed_files[0]), output_path)
+            return True, output_path, None
+        return False, None, "Signing failed"
     except Exception as e:
-        return (False, None, str(e))
+        return False, None, str(e)
 
 # ======= TELEGRAM HANDLERS =======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -194,7 +199,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.Document.APK, handle_apk))
-    logger.info("Bot started.")
+    logger.info("Bot started. Waiting for APKs...")
     app.run_polling()
 
 if __name__ == "__main__":
