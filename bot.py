@@ -38,8 +38,9 @@ MODDED_DIR = os.path.join(BASE_DIR, "modded")
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(MODDED_DIR, exist_ok=True)
 
-APKTOOL_JAR = os.path.join(BASE_DIR, "apktool.jar")
-UBER_SIGNER_JAR = os.path.join(BASE_DIR, "uber-apk-signer.jar")
+# ======= JAR PATHS — MATCHING YOUR FILENAMES =======
+APKTOOL_JAR = os.path.join(BASE_DIR, "apktool_3.0.2.jar")
+UBER_SIGNER_JAR = os.path.join(BASE_DIR, "uber-apk-signer-1.2.1.jar")
 
 # ======= MODDING ENGINE =======
 def mod_apk(input_path, output_path):
